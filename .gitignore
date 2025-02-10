@@ -1,3 +1,6 @@
 assignment0/data/
 assignment0/model.pth
 *.zip
+*.pth
+*.pt
+*.csv
