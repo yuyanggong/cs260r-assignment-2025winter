@@ -5,4 +5,4 @@ assignment0/model.pth
 *.pt
 *.csv
 */data/*
-*/figs/*
+figs/*
