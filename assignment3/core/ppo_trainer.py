@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Categorical
+from torch.distributions import Categorical, Normal
 
 current_dir = osp.join(osp.abspath(osp.dirname(__file__)))
 sys.path.append(current_dir)
@@ -124,14 +124,24 @@ class PPOTrainer:
 
         if self.discrete:  # Please use categorical distribution.
             logits, values = self.model(obs)
-            pass
+            dist = Categorical(logits=logits)
+            if deterministic:
+                actions = torch.argmax(logits, dim=-1)
+            else:
+                actions = dist.sample()
+            action_log_probs = dist.log_prob(actions).unsqueeze(-1)
 
             actions = actions.view(-1, 1)  # In discrete case only return the chosen action.
 
         else:  # Please use normal distribution.
             means, log_std, values = self.model(obs)
-            pass
-
+            std = log_std.exp()
+            dist = Normal(means, std)
+            if deterministic:
+                actions = means
+            else:
+                actions = dist.sample()
+            action_log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)
             actions = actions.view(-1, self.num_actions)
 
         values = values.view(-1, 1)
@@ -150,15 +160,18 @@ class PPOTrainer:
         if self.discrete:
             assert not torch.is_floating_point(act)
             logits, values = self.model(obs)
-            action_log_probs = None
-            dist_entropy = None
+            dist = Categorical(logits=logits)
+            action_log_probs = dist.log_prob(act.squeeze(-1)).unsqueeze(-1)
+            dist_entropy = dist.entropy().mean()
             pass
 
         else:
             assert torch.is_floating_point(act)
             means, log_std, values = self.model(obs)
-            action_log_probs = None
-            dist_entropy = None
+            std = log_std.exp()
+            dist = Normal(means, std)
+            action_log_probs = dist.log_prob(act).sum(dim=-1, keepdim=True)
+            dist_entropy = dist.entropy().sum(dim=-1).mean()
             pass
 
         values = values.view(-1, 1)
@@ -212,13 +225,14 @@ class PPOTrainer:
         assert dist_entropy.requires_grad
 
         # TODO: Implement policy loss
-        policy_loss = None
-        ratio = None  # The importance sampling factor, the ratio of new policy prob over old policy prob
-        pass
+        ratio = torch.exp(action_log_probs - old_action_log_probs_batch)  # The importance sampling factor, the ratio of new policy prob over old policy prob
+        surr1 = ratio * adv_targ
+        surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
+        policy_loss = -torch.min(surr1, surr2).mean()
+        policy_loss_mean = policy_loss.mean()
 
         # TODO: Implement value loss
-        # value_loss = None
-        pass
+        value_loss = F.mse_loss(values, return_batch)
 
         value_loss_mean = value_loss.mean()
 
